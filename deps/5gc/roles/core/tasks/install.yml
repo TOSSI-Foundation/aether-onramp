@@ -308,7 +308,7 @@
         values_files:
           - /tmp/sdcore-5g-values.yaml
         wait: true
-        wait_timeout: "5m0s" # Increase wait timeout to allow for longer deployment times in systems with limited compute resources
+        wait_timeout: "{{ core.helm.wait_timeout | default('20m0s') }}" # Increase wait timeout to allow for longer deployment times in systems with limited compute resources
         force: true
       when: inventory_hostname in groups['master_nodes']
 
@@ -415,7 +415,7 @@
         wait_condition:
           type: Ready
           status: "True"
-        wait_timeout: 300
+        wait_timeout: "{{ core.helm.pod_ready_timeout | default(1200) | int }}"
         wait_sleep: 10
       register: pod_ready_status
       ignore_errors: yes

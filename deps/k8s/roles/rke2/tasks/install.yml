@@ -296,7 +296,7 @@
       - nodes
       - --for=condition=Ready
       - --all
-      - --timeout=300s
+      - "--timeout={{ k8s.rke2.ready_timeout | default('900s') }}"
   changed_when: false
   when: inventory_hostname in groups['master_nodes']
   become: true
@@ -341,7 +341,7 @@
       - kube-system
       - --for=condition=available
       - --all
-      - --timeout=300s
+      - "--timeout={{ k8s.rke2.ready_timeout | default('900s') }}"
   changed_when: false
   when:
     - inventory_hostname in groups['master_nodes']

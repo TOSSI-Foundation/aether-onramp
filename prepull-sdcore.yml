@@ -1,0 +1,36 @@
+---
+# make aether-sdcore-prepull : pull every SD-Core image into RKE2's containerd
+# in parallel before the helm install. kubelet pulls serially by default, and
+# on slow registry links that blows through helm --wait (upstream 5m).
+- name: prepull sd-core images
+  hosts: master_nodes
+  gather_facts: false
+  become: true
+  vars_files:
+    - "vars/main.yml"
+  vars:
+    crictl: "/var/lib/rancher/rke2/bin/crictl --runtime-endpoint unix:///run/k3s/containerd/containerd.sock"
+    parallel: "{{ core.helm.prepull_parallel | default(8) }}"
+  tasks:
+    - name: render chart image list
+      shell: >-
+        /usr/local/bin/helm template sd-core {{ core.helm.chart_ref }}
+        {{ '' if core.helm.local_charts | default(false) else '--version ' ~ core.helm.chart_version }}
+        --set 5g-control-plane.kafka.deploy=true --set 5g-control-plane.config.metricfunc.deploy=true
+        --set omec-sub-provision.enable=true --set omec-user-plane.enable=true
+        | grep -E '^\s*-?\s*image:' | sed -E 's/.*image:\s*"?([^" ]+)"?.*/\1/' | grep -E '^[a-z0-9.-]+(/[a-z0-9._-]+)+:[A-Za-z0-9._-]+$' | sort -u
+      register: images
+      changed_when: false
+      when: not (airgapped.enabled | default(false) | bool)
+
+    - name: pull images in parallel ({{ parallel }} at a time)
+      shell: |
+        printf '%s\n' {{ images.stdout_lines | map('quote') | join(' ') }} \
+          | xargs -P {{ parallel }} -I{} sh -c '{{ crictl }} inspecti {} >/dev/null 2>&1 && echo "cached {}" || ({{ crictl }} pull {} >/dev/null && echo "pulled {}")'
+      register: pulled
+      changed_when: "'pulled ' in pulled.stdout"
+      when: not (airgapped.enabled | default(false) | bool)
+
+    - debug:
+        var: pulled.stdout_lines
+      when: pulled.stdout_lines is defined

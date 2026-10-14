@@ -1,3 +1,88 @@
+# aether-onramp
+
+Single Click Deployment of Aether SD-Core.
+
+This repository is [Aether OnRamp](https://github.com/opennetworkinglab/aether-onramp)
+(upstream history preserved) plus a one-click path that deploys RKE2 Kubernetes and the
+SD-Core 5G core on a single Ubuntu 22.04 node, then verifies it. No RAN or gNBsim is
+installed. The deployment itself is still OnRamp's own `make` and Ansible roles.
+
+## Quick start
+
+Requirements: Ubuntu 22.04, 8+ cores, 16+ GiB RAM, ~40 GB free disk, passwordless sudo,
+internet access to docker.io and ghcr.io.
+
+```bash
+git clone https://github.com/TOSSI-Foundation/aether-onramp.git ~/aether-onramp
+cd ~/aether-onramp
+./oneclick.sh
+```
+
+`oneclick.sh` works on any single-node VM or server. On every run it writes `hosts.ini`
+and `vars/main.yml` for the host it runs on:
+
+| Setting | Source |
+|---|---|
+| Ansible user (`hosts.ini`) | the user running the script |
+| `core.data_iface`, `gnbsim.router.data_iface` | interface on the default route |
+| `core.amf.ip` | that interface's IPv4 address |
+| `core.ran_subnet` | `172.20.0.0/16`, or `172.30.0.0/16` if 172.20 is already routed (kind/Docker) |
+
+Override any of them:
+
+```bash
+NODE_IP=10.0.0.5 IFACE=ens18 RAN_SUBNET=172.30.0.0/16 ./oneclick.sh
+```
+
+It is safe to re-run. A failed `sd-core` Helm release from an earlier attempt is removed
+first; a healthy deployed release is left alone. Pulled images stay cached.
+
+Multi-node: edit `hosts.ini` by hand as in standard OnRamp; the auto-config covers node1 only.
+
+## What `oneclick.sh` does
+
+1. Installs `make`, `git`, `pipx` and Ansible via pipx (Ubuntu 22.04's apt Ansible 2.10 is
+   too old for `community.docker` 5.x), plus the Galaxy collections in `requirements.yml`.
+2. Creates a localhost SSH key so Ansible can reach `node1` at `127.0.0.1`.
+3. Writes `hosts.ini` and `vars/main.yml` for this host (table above).
+4. Saves any existing `~/.kube/config` to `~/.kube/pre-aether.config` and merges it back
+   afterwards, because OnRamp overwrites it with the RKE2 kubeconfig. The RKE2 context is
+   named `aether-rke2`.
+5. Runs `make aether-sdcore-oneclick`.
+
+## Make targets added
+
+| Target | Runs |
+|---|---|
+| `aether-sdcore-oneclick` | `aether-pingall` → `k8s-install` → `aether-sdcore-prepull` → `5gc-install` → `aether-sdcore-verify` |
+| `aether-sdcore-prepull` | `prepull-sdcore.yml`: renders the SD-Core chart's image list and pulls all images into RKE2's containerd in parallel |
+| `aether-sdcore-verify` | `verify-sdcore.yml`: node Ready, all `aether-5gc` pods Ready, UPF↔SMF PFCP association (recycles `upf-0` on the known "datapath down" startup race), AMF N2 SCTP 38412 exposed on `core.amf.ip`, webui API responding |
+
+## Changes to upstream files
+
+| File | Change |
+|---|---|
+| `deps/k8s/roles/rke2/tasks/install.yml` | Node-Ready wait was a fixed 300 s; now `k8s.rke2.ready_timeout` (default 900 s) |
+| `deps/5gc/roles/core/tasks/install.yml` | Helm `--wait` was a fixed 5 min; now `core.helm.wait_timeout` (default 20 min). Rescue-path pod wait was 300 s; now `core.helm.pod_ready_timeout` (default 1200 s) |
+| `vars/main.yml` | Adds the three timeout keys above |
+| `Makefile` | Adds the three targets above |
+
+The fixed upstream timeouts fail on slow registry links: the kubelet pulls images one at a
+time, so the node or the SD-Core pods are not Ready within 5 minutes.
+
+## Useful commands
+
+```bash
+make aether-sdcore-verify                 # re-run health checks only
+kubectl -n aether-5gc get pods            # core NFs
+make aether-5gc-uninstall                 # remove the core
+make aether-k8s-uninstall                 # remove RKE2
+```
+
+---
+
+# Upstream Aether OnRamp README
+
 # Aether OnRamp
 
 Aether OnRamp provides a low-overhead way to bring up a

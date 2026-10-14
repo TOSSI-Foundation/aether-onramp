@@ -1,0 +1,72 @@
+---
+# make aether-sdcore-verify : post-install health gate for the SD-Core 5G core.
+# Checks node, all pods Ready, UPF<->SMF PFCP association (auto-heals the
+# pfcp-agent "datapath down" startup race), no restarting pods, AMF N2
+# exposure on core.amf.ip, and the webui subscriber provisioning API.
+- name: verify sd-core
+  hosts: master_nodes[0]
+  gather_facts: false
+  become: true
+  vars_files:
+    - "vars/main.yml"
+  vars:
+    ns: aether-5gc
+    kc: "/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+  tasks:
+    - name: k8s node Ready
+      shell: "{{ kc }} wait --for=condition=Ready node --all --timeout=300s"
+      changed_when: false
+
+    - name: all {{ ns }} pods Ready (up to 15 min for image pulls)
+      shell: "{{ kc }} -n {{ ns }} wait --for=condition=Ready pod --all --timeout=900s"
+      changed_when: false
+
+    - name: UPF PFCP association with SMF (recycle upf-0 on datapath-down race)
+      shell: |
+        for i in 1 2 3; do
+          for t in $(seq 1 24); do
+            {{ kc }} -n {{ ns }} logs upf-0 -c pfcp-agent --tail=300 2>/dev/null \
+              | grep -qiE "association setup (done|success)|AssociationSetupResponse" && { echo "associated (attempt $i)"; exit 0; }
+            sleep 5
+          done
+          echo "no association after 2m, recycling upf-0"
+          {{ kc }} -n {{ ns }} delete pod upf-0 --wait=true
+          {{ kc }} -n {{ ns }} wait --for=condition=Ready pod/upf-0 --timeout=300s
+        done
+        exit 1
+      register: pfcp
+      changed_when: "'recycling' in pfcp.stdout"
+
+    - name: all pods Running and fully ready after settle
+      shell: |
+        sleep 30
+        {{ kc }} -n {{ ns }} get pods --no-headers | awk '{split($2,r,"/"); if (r[1]!=r[2] || $3!="Running") {print; bad=1}} END {exit bad}'
+      changed_when: false
+
+    - name: AMF N2 (SCTP 38412) exposed on {{ core.amf.ip }}
+      shell: >-
+        {{ kc }} -n {{ ns }} get svc -o json
+        | python3 -c 'import json,sys; d=json.load(sys.stdin);
+        ok=[s["metadata"]["name"] for s in d["items"]
+        if any(p.get("port")==38412 for p in s["spec"].get("ports",[]))
+        and ("{{ core.amf.ip }}" in (s["spec"].get("externalIPs") or [])
+        or "{{ core.amf.ip }}" in [i.get("ip") for i in s.get("status",{}).get("loadBalancer",{}).get("ingress",[]) or []])];
+        print(ok); sys.exit(0 if ok else 1)'
+      register: amf
+      changed_when: false
+
+    - name: webui provisioning API responds
+      shell: |
+        port=$({{ kc }} -n {{ ns }} get svc webui -o jsonpath='{.spec.ports[?(@.port==5000)].nodePort}')
+        curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:${port:-30001}/api/subscriber
+      register: webui
+      changed_when: false
+      failed_when: webui.stdout not in ['200', '401']
+
+    - name: summary
+      shell: "{{ kc }} -n {{ ns }} get pods,svc -o wide"
+      register: summary
+      changed_when: false
+
+    - debug:
+        msg: "{{ ['SD-CORE VERIFY: PASS', 'pfcp: ' ~ pfcp.stdout_lines[-1], 'amf svc: ' ~ amf.stdout, 'webui http: ' ~ webui.stdout] + summary.stdout_lines }}"

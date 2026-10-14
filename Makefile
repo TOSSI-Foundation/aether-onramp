@@ -63,6 +63,15 @@ aether-n3iwf-uninstall: n3iwf-uninstall
 aether-install: k8s-install 5gc-install gnbsim-install amp-install
 aether-uninstall: amp-uninstall gnbsim-uninstall 5gc-uninstall k8s-uninstall
 
+#### One-click SD-Core (k8s + 5G core + verify, no RAN) ####
+aether-sdcore-oneclick: aether-pingall k8s-install aether-sdcore-prepull 5gc-install aether-sdcore-verify
+aether-sdcore-prepull:
+	ansible-playbook -i $(HOSTS_INI_FILE) $(AETHER_ROOT_DIR)/prepull-sdcore.yml \
+		--extra-vars "ROOT_DIR=$(ROOT_DIR)" --extra-vars $(EXTRA_VARS)
+aether-sdcore-verify:
+	ansible-playbook -i $(HOSTS_INI_FILE) $(AETHER_ROOT_DIR)/verify-sdcore.yml \
+		--extra-vars "ROOT_DIR=$(ROOT_DIR)" --extra-vars $(EXTRA_VARS)
+
 #### Provision AETHER for 4G ####
 #### 4G/5G share router role ####
 aether-4gc-install: 4gc-core-install 5gc-router-install
