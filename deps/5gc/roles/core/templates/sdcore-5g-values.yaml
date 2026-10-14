@@ -38,6 +38,35 @@ omec-control-plane:
     # Override core.mongodb.replicaCount/resources (e.g., from CI) to shrink the
     # footprint on constrained runners; when unset this template falls back to 2.
     replicaCount: {{ core.get('mongodb', {}).get('replicaCount', 2) }}
+{% set mdb_probe_timeout = core.get('mongodb', {}).get('probe_timeout', 30) %}
+    # The chart's exec probes (mongosh, 10s/5s timeouts) time out on CPU-contended
+    # hosts and the kubelet restart-loops mongodb; override via core.mongodb.probe_timeout.
+    livenessProbe:
+      timeoutSeconds: {{ mdb_probe_timeout }}
+      failureThreshold: 10
+    readinessProbe:
+      timeoutSeconds: {{ mdb_probe_timeout }}
+      failureThreshold: 10
+    # Bitnami's first-boot rs.initiate uses a 2 s server-selection timeout and only
+    # 7 x 5 s retries; under CPU contention it gives up ("primary node failed to get
+    # configured") and the restarted pod never initiates the replica set. Retry longer.
+    extraEnvVars:
+      - name: MONGODB_INIT_RETRY_ATTEMPTS
+        value: "{{ core.get('mongodb', {}).get('init_retry_attempts', 60) }}"
+      - name: MONGODB_INIT_RETRY_DELAY
+        value: "{{ core.get('mongodb', {}).get('init_retry_delay', 10) }}"
+    arbiter:
+      extraEnvVars:
+        - name: MONGODB_INIT_RETRY_ATTEMPTS
+          value: "{{ core.get('mongodb', {}).get('init_retry_attempts', 60) }}"
+        - name: MONGODB_INIT_RETRY_DELAY
+          value: "{{ core.get('mongodb', {}).get('init_retry_delay', 10) }}"
+      livenessProbe:
+        timeoutSeconds: {{ mdb_probe_timeout }}
+        failureThreshold: 10
+      readinessProbe:
+        timeoutSeconds: {{ mdb_probe_timeout }}
+        failureThreshold: 10
 {% set mdb_requests = core.get('mongodb', {}).get('resources', {}).get('requests', {}) %}
 {% set mdb_limits = core.get('mongodb', {}).get('resources', {}).get('limits', {}) %}
 {% if mdb_requests.get('cpu') and mdb_requests.get('memory') and mdb_limits.get('cpu') and mdb_limits.get('memory') %}

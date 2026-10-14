@@ -64,11 +64,21 @@ Multi-node: edit `hosts.ini` by hand as in standard OnRamp; the auto-config cove
 |---|---|
 | `deps/k8s/roles/rke2/tasks/install.yml` | Node-Ready wait was a fixed 300 s; now `k8s.rke2.ready_timeout` (default 900 s) |
 | `deps/5gc/roles/core/tasks/install.yml` | Helm `--wait` was a fixed 5 min; now `core.helm.wait_timeout` (default 20 min). Rescue-path pod wait was 300 s; now `core.helm.pod_ready_timeout` (default 1200 s) |
+| `deps/5gc/roles/core/templates/sdcore-5g-values.yaml` | MongoDB hardening for CPU-contended hosts, for both data nodes and the arbiter. Probe timeouts raised from 10 s/5 s to `core.mongodb.probe_timeout` (default 30 s), failureThreshold 10: the chart's `mongosh` exec probes time out and the kubelet restart-loops MongoDB. First-boot replica-set init retries raised from 7 x 5 s to `core.mongodb.init_retry_attempts` x `init_retry_delay` (default 60 x 10 s): Bitnami's `rs.initiate` otherwise gives up ("primary node failed to get configured") and the restarted pod never forms the replica set, which takes UDR, SMF and webui down with it |
 | `vars/main.yml` | Adds the three timeout keys above |
 | `Makefile` | Adds the three targets above |
 
 The fixed upstream timeouts fail on slow registry links: the kubelet pulls images one at a
 time, so the node or the SD-Core pods are not Ready within 5 minutes.
+
+If MongoDB still restarts on a heavily loaded host, raise these in `vars/main.yml`:
+
+```yaml
+core:
+  mongodb:
+    probe_timeout: 60
+    init_retry_attempts: 120
+```
 
 ## Useful commands
 
